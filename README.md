@@ -1,13 +1,13 @@
 <!--
-  README for timeman: a tray-first Tauri + React template.
+  README for peek: a tray-first Tauri + React template.
   Keep this file focused, easy to scan, and actionable for new contributors.
 -->
 
-# timeman — Tray-first Tauri App Template
+# peek — Tray-first Tauri App Template
 
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![build](https://img.shields.io/badge/build-windows%20%7C%20linux%20%7C%20macOS-lightgrey.svg)](#)
 
-timeman is a minimal, production-minded template for tray-first desktop apps
+peek is a minimal, production-minded template for tray-first desktop apps
 built with Tauri (Rust) and a React (Vite) frontend. The app is designed to
 live primarily in the system tray: it starts hidden, supports left-click
 toggle of the main window, and exposes actions on right-click.
