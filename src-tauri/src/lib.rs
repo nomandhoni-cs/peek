@@ -1,5 +1,6 @@
 mod autostart;
 mod config;
+mod db;
 mod formatter;
 mod monitor;
 mod overlay;
@@ -8,6 +9,7 @@ mod tray;
 
 use tauri::Emitter;
 use tauri::Manager;
+use tauri_plugin_sql::{Migration, MigrationKind};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -22,26 +24,25 @@ fn save_overlay_position(
     height: u32,
     manual: bool,
 ) -> Result<(), String> {
-    let cfg = crate::config::OverlayConfig {
+    crate::config::OverlayConfig {
         x,
         y,
         width,
         height,
         manual,
-    };
-    cfg.save()
+    }
+    .save()
 }
 
 #[tauri::command]
 fn set_overlay_state(x: i32, y: i32, width: u32, height: u32, manual: bool) {
-    let cfg = crate::config::OverlayConfig {
+    crate::overlay_state::set_overlay(crate::config::OverlayConfig {
         x,
         y,
         width,
         height,
         manual,
-    };
-    crate::overlay_state::set_overlay(cfg);
+    });
 }
 
 #[tauri::command]
@@ -74,7 +75,6 @@ fn enable_autostart(app: tauri::AppHandle) -> tauri::Result<()> {
     autostart::enable_autostart(&app)
 }
 
-// THIS FORCES THE WINDOW ABOVE THE TASKBAR
 #[tauri::command]
 fn force_topmost(app: tauri::AppHandle) {
     #[cfg(target_os = "windows")]
@@ -97,24 +97,25 @@ fn force_topmost(app: tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // FIX: Using the imported `Migration` struct properly
+    let migrations = vec![Migration {
+        version: 1,
+        description: "create_tables",
+        sql: "
+            CREATE TABLE IF NOT EXISTS overlay (id INTEGER PRIMARY KEY, x INTEGER, y INTEGER, width INTEGER, height INTEGER, manual INTEGER);
+            CREATE TABLE IF NOT EXISTS network_usage (date TEXT PRIMARY KEY, rx_bytes INTEGER DEFAULT 0, tx_bytes INTEGER DEFAULT 0);
+        ",
+        kind: MigrationKind::Up,
+    }];
+
     tauri::Builder::default()
-        .plugin(
-            tauri_plugin_autostart::init(
-                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-                None,
-            ),
-        )
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(
             tauri_plugin_sql::Builder::default()
-                .add_migrations(
-                    "sqlite:overlay.db",
-                    vec![tauri_plugin_sql::Migration {
-                        version: 1,
-                        description: "create_overlay_table",
-                        sql: "CREATE TABLE IF NOT EXISTS overlay (id INTEGER PRIMARY KEY, x INTEGER, y INTEGER, width INTEGER, height INTEGER, manual INTEGER);",
-                        kind: tauri_plugin_sql::MigrationKind::Up,
-                    }],
-                )
+                .add_migrations("sqlite:overlay.db", migrations)
                 .build(),
         )
         .setup(|app| {
@@ -130,15 +131,35 @@ pub fn run() {
             {
                 crate::overlay::init_overlay(&handle);
             }
-            tauri::async_runtime::spawn(async move {
-                let mut monitor = crate::monitor::Monitor::new();
 
+            tauri::async_runtime::spawn(async move {
+                let db_pool = crate::db::init_db(&tray_handle)
+                    .await
+                    .expect("Failed to initialize SQLite");
+
+                let mut monitor = crate::monitor::Monitor::new();
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 let _ = monitor.poll();
+
+                let mut rx_accum = 0;
+                let mut tx_accum = 0;
+                let mut ticks = 0;
 
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     let stats = monitor.poll();
+
+                    rx_accum += stats.rx_bytes_delta;
+                    tx_accum += stats.tx_bytes_delta;
+                    ticks += 1;
+
+                    if ticks >= 60 {
+                        crate::db::add_usage(&db_pool, rx_accum, tx_accum).await;
+                        rx_accum = 0;
+                        tx_accum = 0;
+                        ticks = 0;
+                    }
+
                     let label = crate::formatter::build_tray_label(&stats);
 
                     if let Some(tray) = tray_handle.tray_by_id("main") {
@@ -146,7 +167,6 @@ pub fn run() {
                         {
                             let _ = tray.set_title(Some(label.clone()));
                         }
-
                         #[cfg(not(target_os = "macos"))]
                         {
                             let _ = tray.set_tooltip::<String>(Some(label.clone()));
@@ -177,7 +197,7 @@ pub fn run() {
             is_autostart_enabled,
             set_autostart_enabled,
             enable_autostart,
-            force_topmost // <-- Registered here
+            force_topmost
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -18,6 +18,8 @@ pub struct Stats {
     pub ram_total: u64,
     pub net_rx: u64,
     pub net_tx: u64,
+    pub rx_bytes_delta: u64, // Exact downloaded bytes since last poll
+    pub tx_bytes_delta: u64, // Exact uploaded bytes since last poll
 }
 
 impl Monitor {
@@ -43,7 +45,6 @@ impl Monitor {
                 utilization_percentage: Option<u32>,
             }
 
-            // Initializes COM context on this specific thread for WMI
             if let Ok(com) = COMLibrary::new() {
                 if let Ok(con) = WMIConnection::new(com.into()) {
                     loop {
@@ -51,9 +52,7 @@ impl Monitor {
                             let mut max_usage = 0;
                             for adapter in adapters {
                                 if let Some(pct) = adapter.utilization_percentage {
-                                    if pct > max_usage {
-                                        max_usage = pct;
-                                    }
+                                    if pct > max_usage { max_usage = pct; }
                                 }
                             }
                             if let Ok(mut lock) = gpu_usage_clone.lock() {
@@ -105,8 +104,6 @@ impl Monitor {
             0.0
         };
 
-        // FIX: Unwrap the lock to get the guard, then dereference it safely.
-        // We use unwrap_or_else to safely fallback without panicking if the mutex gets poisoned.
         let gpu = *self
             .gpu_usage
             .lock()
@@ -119,6 +116,8 @@ impl Monitor {
             ram_total: self.sys.total_memory(),
             net_rx: rx_speed,
             net_tx: tx_speed,
+            rx_bytes_delta: rx_delta,
+            tx_bytes_delta: tx_delta,
         }
     }
 }

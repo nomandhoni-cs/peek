@@ -5,6 +5,8 @@
   "windows": ["main", "overlay"],
   "permissions": [
     "core:default",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "sql:default",
+    "sql:allow-execute"
   ]
 }

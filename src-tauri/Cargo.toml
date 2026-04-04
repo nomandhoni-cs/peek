@@ -22,7 +22,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_Wi
 serde_json = "1"
 serde = { version = "1.0", features = ["derive"] }
 dirs = "5"
-tauri-plugin-sql = { version = "*", features = ["sqlite"] }
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 wmi = "0.13"
 
 [package.metadata.tauri]
