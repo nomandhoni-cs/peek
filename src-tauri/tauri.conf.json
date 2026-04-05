@@ -12,6 +12,12 @@
   "plugins": {
     "sql": {
       "preload": ["sqlite:overlay.db"]
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJENzM2QjFFRjIxMkJGNDEKUldSQnZ4THlIbXR6TGVvTFpzaDZGYjZjcE1CSUVlZndCZ0I0dmdQeXhoaEt6d1FTTnBqMmU2MjAK",
+      "endpoints": [
+        "https://raw.githubusercontent.com/nomandhoni-cs/peek/main/updater.json"
+      ]
     }
   },
   "app": {

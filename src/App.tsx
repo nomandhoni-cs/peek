@@ -2,14 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Database from "@tauri-apps/plugin-sql";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
-  AppWindow,
   ArrowDown,
   ArrowUp,
   CalendarDays,
   Clock3,
+  DownloadCloud,
   History,
-  Info,
   Minimize2,
   RefreshCw,
   TrendingUp,
@@ -44,6 +45,7 @@ export default function App() {
   const [usage, setUsage] = useState<UsageReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState("Check for updates");
 
   const fetchUsage = async () => {
     try {
@@ -140,6 +142,47 @@ export default function App() {
     }
   }
 
+  async function checkForUpdates() {
+    try {
+      setUpdateStatus("Checking...");
+      const update = await check();
+
+      if (update) {
+        setUpdateStatus(`Downloading v${update.version}...`);
+        let downloaded = 0;
+        let contentLength = 0;
+
+        await update.downloadAndInstall((event) => {
+          switch (event.event) {
+            case "Started":
+              contentLength = event.data.contentLength || 0;
+              break;
+            case "Progress":
+              downloaded += event.data.chunkLength;
+              if (contentLength > 0) {
+                const percent = Math.round((downloaded / contentLength) * 100);
+                setUpdateStatus(`Downloading ${percent}%`);
+              }
+              break;
+            case "Finished":
+              setUpdateStatus("Installing...");
+              break;
+          }
+        });
+
+        setUpdateStatus("Relaunching...");
+        await relaunch();
+      } else {
+        setUpdateStatus("App is up to date");
+        setTimeout(() => setUpdateStatus("Check for updates"), 3000);
+      }
+    } catch (error) {
+      console.error(error);
+      setUpdateStatus("Update failed");
+      setTimeout(() => setUpdateStatus("Check for updates"), 3000);
+    }
+  }
+
   const formatBytes = (bytes: number) => {
     if (!bytes || bytes === 0) return "0 B";
     const k = 1024;
@@ -188,12 +231,12 @@ export default function App() {
               <img
                 src={appLogo}
                 alt="peek logo"
-                className="h-full w-full object-contain"
+                className="h-full w-full object-contain pointer-events-none"
                 draggable={false}
               />
             </div>
 
-            <div className="min-w-0" data-tauri-drag-region>
+            <div className="min-w-0 pointer-events-none" data-tauri-drag-region>
               <div className="text-sm font-semibold tracking-tight">peek</div>
               <div className="text-[10px] text-muted-foreground">
                 compact network tray
@@ -377,6 +420,30 @@ export default function App() {
                           />
                         </CardContent>
                       </Card>
+
+                      <Card className="rounded-2xl">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm">
+                            Recorded totals
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="grid grid-cols-2 gap-2">
+                          <CompactStat
+                            label="All download"
+                            value={formatBytes(usage.all_time.rx)}
+                            icon={
+                              <ArrowDown className="h-3.5 w-3.5 text-sky-500" />
+                            }
+                          />
+                          <CompactStat
+                            label="All upload"
+                            value={formatBytes(usage.all_time.tx)}
+                            icon={
+                              <ArrowUp className="h-3.5 w-3.5 text-emerald-500" />
+                            }
+                          />
+                        </CardContent>
+                      </Card>
                     </>
                   ) : (
                     <EmptyState text="History is not available." />
@@ -413,9 +480,31 @@ export default function App() {
                             className="inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                           >
                             <RefreshCw
-                              className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+                              className={`h-3.5 w-3.5 ${refreshing ? "animate-spin text-primary" : ""}`}
                             />
                             Refresh
+                          </button>
+                        }
+                      />
+
+                      <Separator />
+
+                      <SettingRow
+                        title="Software update"
+                        description="Check for the latest version of Peek"
+                        control={
+                          <button
+                            type="button"
+                            onClick={checkForUpdates}
+                            disabled={
+                              updateStatus !== "Check for updates" &&
+                              updateStatus !== "App is up to date" &&
+                              updateStatus !== "Update failed"
+                            }
+                            className="inline-flex h-8 items-center gap-2 rounded-md border bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground px-2.5 text-xs font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                          >
+                            <DownloadCloud className="h-3.5 w-3.5" />
+                            {updateStatus}
                           </button>
                         }
                       />
