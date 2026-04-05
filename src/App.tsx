@@ -1,7 +1,31 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import Database from "@tauri-apps/plugin-sql";
-import "./App.css";
+import {
+  AppWindow,
+  ArrowDown,
+  ArrowUp,
+  CalendarDays,
+  Clock3,
+  History,
+  Info,
+  Minimize2,
+  RefreshCw,
+  TrendingUp,
+  X,
+} from "lucide-react";
+
+import appLogo from "./assets/icon.svg";
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import "./index.css";
 
 interface Usage {
   rx: number;
@@ -19,10 +43,13 @@ export default function App() {
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [usage, setUsage] = useState<UsageReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const fetchUsage = async () => {
     try {
-      setLoading(true);
+      setRefreshing(true);
+      setLoading((prev) => (usage ? prev : true));
+
       const db = await Database.load("sqlite:overlay.db");
 
       const today = await db.select<Usage[]>(
@@ -66,10 +93,13 @@ export default function App() {
       console.error("Failed to fetch usage from database:", e);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
+    document.documentElement.classList.add("dark");
+
     invoke<boolean>("is_autostart_enabled")
       .then((v) => setAutostart(v))
       .catch(() => setAutostart(null));
@@ -79,10 +109,35 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  async function toggleAutostart() {
-    if (autostart === null) return;
-    await invoke("set_autostart_enabled", { enabled: !autostart });
-    setAutostart(!autostart);
+  async function toggleAutostart(checked: boolean) {
+    try {
+      setAutostart(checked);
+      await invoke("set_autostart_enabled", { enabled: checked });
+    } catch {
+      setAutostart(!checked);
+    }
+  }
+
+  async function minimizeWindow() {
+    try {
+      const win = getCurrentWindow();
+      await win.minimize();
+    } catch (e) {
+      console.error("Failed to minimize window:", e);
+    }
+  }
+
+  async function closeWindow() {
+    try {
+      const win = getCurrentWindow();
+      await win.hide();
+    } catch (e) {
+      console.error("Failed to hide window:", e);
+      try {
+        const win = getCurrentWindow();
+        await win.minimize();
+      } catch {}
+    }
   }
 
   const formatBytes = (bytes: number) => {
@@ -90,7 +145,7 @@ export default function App() {
     const k = 1024;
     const sizes = ["B", "KB", "MB", "GB", "TB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
   };
 
   const totalTraffic = useMemo(() => {
@@ -109,14 +164,12 @@ export default function App() {
 
   const strongestPeriod = useMemo(() => {
     if (!usage) return null;
-
     const periods = [
       { name: "Today", total: usage.today.rx + usage.today.tx },
-      { name: "Past 7 Days", total: usage.week.rx + usage.week.tx },
-      { name: "Past 30 Days", total: usage.month.rx + usage.month.tx },
+      { name: "7 Days", total: usage.week.rx + usage.week.tx },
+      { name: "30 Days", total: usage.month.rx + usage.month.tx },
       { name: "All Time", total: usage.all_time.rx + usage.all_time.tx },
     ];
-
     return periods.reduce(
       (max, p) => (p.total > max.total ? p : max),
       periods[0],
@@ -124,170 +177,428 @@ export default function App() {
   }, [usage]);
 
   return (
-    <main className="container">
-      <section className="hero">
-        <div>
-          <p className="eyebrow">Network analytics</p>
-          <h1>Peek Dashboard</h1>
-          <p className="subtitle">
-            A clean overview of your traffic usage, upload and download history,
-            and system tracking — designed for quick understanding.
-          </p>
+    <main className="h-screen overflow-hidden bg-transparent text-foreground">
+      <div className="mx-auto flex h-screen w-full max-w-[420px] flex-col overflow-hidden rounded-[22px] border bg-card shadow-2xl">
+        <div className="flex items-center justify-between border-b px-3 py-2.5">
+          <div
+            className="flex min-w-0 items-center gap-2.5"
+            data-tauri-drag-region
+          >
+            <div className="flex h-8 w-8 items-center justify-center overflow-hidden">
+              <img
+                src={appLogo}
+                alt="peek logo"
+                className="h-full w-full object-contain"
+                draggable={false}
+              />
+            </div>
+
+            <div className="min-w-0" data-tauri-drag-region>
+              <div className="text-sm font-semibold tracking-tight">peek</div>
+              <div className="text-[10px] text-muted-foreground">
+                compact network tray
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                minimizeWindow();
+              }}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              aria-label="Minimize window"
+              title="Minimize"
+            >
+              <Minimize2 className="h-3.5 w-3.5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                closeWindow();
+              }}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
+              aria-label="Hide window"
+              title="Hide to tray"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
 
-        <button
-          className={`autostart-btn ${autostart ? "enabled" : "disabled"}`}
-          onClick={toggleAutostart}
-          disabled={autostart === null}
-        >
-          <span className="dot" />
-          {autostart === null
-            ? "Checking autostart..."
-            : autostart
-              ? "Autostart Enabled"
-              : "Autostart Disabled"}
-        </button>
-      </section>
+        <Tabs defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
+          <div className="border-b px-3 py-2">
+            <TabsList className="grid h-8 w-full grid-cols-3 rounded-lg">
+              <TabsTrigger value="overview" className="text-xs">
+                Overview
+              </TabsTrigger>
+              <TabsTrigger value="history" className="text-xs">
+                History
+              </TabsTrigger>
+              <TabsTrigger value="settings" className="text-xs">
+                Settings
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
-      {loading ? (
-        <div className="loading-card">Loading network statistics...</div>
-      ) : usage ? (
-        <>
-          <section className="section">
-            <div className="section-header">
-              <h2>Overview</h2>
-              <span className="muted">Updated every 10 seconds</span>
-            </div>
+          <div className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
+              <div className="space-y-3 p-3">
+                <TabsContent value="overview" className="mt-0 space-y-3">
+                  {loading ? (
+                    <DashboardSkeleton />
+                  ) : usage ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-3">
+                        <SmallUsageCard
+                          title="Today"
+                          icon={<CalendarDays className="h-3.5 w-3.5" />}
+                          rx={formatBytes(usage.today.rx)}
+                          tx={formatBytes(usage.today.tx)}
+                        />
+                        <SmallUsageCard
+                          title="7 Days"
+                          icon={<TrendingUp className="h-3.5 w-3.5" />}
+                          rx={formatBytes(usage.week.rx)}
+                          tx={formatBytes(usage.week.tx)}
+                        />
+                        <SmallUsageCard
+                          title="30 Days"
+                          icon={<Clock3 className="h-3.5 w-3.5" />}
+                          rx={formatBytes(usage.month.rx)}
+                          tx={formatBytes(usage.month.tx)}
+                        />
+                        <SmallUsageCard
+                          title="All Time"
+                          icon={<History className="h-3.5 w-3.5" />}
+                          rx={formatBytes(usage.all_time.rx)}
+                          tx={formatBytes(usage.all_time.tx)}
+                        />
+                      </div>
 
-            <div className="grid">
-              <UsageCard
-                title="Today"
-                data={usage.today}
-                formatBytes={formatBytes}
-                accent="green"
-              />
-              <UsageCard
-                title="Past 7 Days"
-                data={usage.week}
-                formatBytes={formatBytes}
-                accent="blue"
-              />
-              <UsageCard
-                title="Past 30 Days"
-                data={usage.month}
-                formatBytes={formatBytes}
-                accent="purple"
-              />
-              <UsageCard
-                title="All Time"
-                data={usage.all_time}
-                formatBytes={formatBytes}
-                accent="orange"
-              />
-            </div>
-          </section>
+                      <Card className="rounded-2xl">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm">
+                            Traffic split
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="h-2 w-2 rounded-full bg-sky-500" />
+                              <span className="text-muted-foreground">
+                                Download
+                              </span>
+                              <span className="font-medium">
+                                {downloadShare}%
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                              <span className="text-muted-foreground">
+                                Upload
+                              </span>
+                              <span className="font-medium">
+                                {uploadShare}%
+                              </span>
+                            </div>
+                          </div>
 
-          <section className="section insights-grid">
-            <div className="panel">
-              <h3>Traffic Summary</h3>
-              <div className="big-stat">{formatBytes(totalTraffic)}</div>
-              <p className="muted">
-                Total network traffic recorded across all tracked time.
-              </p>
-            </div>
+                          <Progress value={downloadShare} className="h-2" />
 
-            <div className="panel">
-              <h3>Most Active Window</h3>
-              <div className="big-stat">{strongestPeriod?.name ?? "—"}</div>
-              <p className="muted">
-                Highest combined upload and download usage among the tracked
-                summary periods.
-              </p>
-            </div>
-          </section>
+                          <div className="grid grid-cols-2 gap-2">
+                            <CompactStat
+                              label="Download"
+                              value={formatBytes(usage.all_time.rx)}
+                              icon={
+                                <ArrowDown className="h-3.5 w-3.5 text-sky-500" />
+                              }
+                            />
+                            <CompactStat
+                              label="Upload"
+                              value={formatBytes(usage.all_time.tx)}
+                              icon={
+                                <ArrowUp className="h-3.5 w-3.5 text-emerald-500" />
+                              }
+                            />
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </>
+                  ) : (
+                    <EmptyState text="No usage data found." />
+                  )}
+                </TabsContent>
 
-          <section className="section">
-            <div className="section-header">
-              <h2>Upload vs Download</h2>
-              <span className="muted">All-time distribution</span>
-            </div>
+                <TabsContent value="history" className="mt-0 space-y-3">
+                  {loading ? (
+                    <DashboardSkeleton />
+                  ) : usage ? (
+                    <>
+                      <Card className="rounded-2xl">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm">
+                            Usage summary
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                          <HistoryRow
+                            label="Total traffic"
+                            value={formatBytes(totalTraffic)}
+                          />
+                          <Separator />
+                          <HistoryRow
+                            label="Most active window"
+                            value={strongestPeriod?.name ?? "—"}
+                          />
+                          <Separator />
+                          <HistoryRow
+                            label="Today download"
+                            value={formatBytes(usage.today.rx)}
+                          />
+                          <Separator />
+                          <HistoryRow
+                            label="Today upload"
+                            value={formatBytes(usage.today.tx)}
+                          />
+                          <Separator />
+                          <HistoryRow
+                            label="7-day total"
+                            value={formatBytes(usage.week.rx + usage.week.tx)}
+                          />
+                          <Separator />
+                          <HistoryRow
+                            label="30-day total"
+                            value={formatBytes(usage.month.rx + usage.month.tx)}
+                          />
+                        </CardContent>
+                      </Card>
+                    </>
+                  ) : (
+                    <EmptyState text="History is not available." />
+                  )}
+                </TabsContent>
 
-            <div className="panel">
-              <div className="split-header">
-                <div>
-                  <span className="legend download" /> Download {downloadShare}%
-                </div>
-                <div>
-                  <span className="legend upload" /> Upload {uploadShare}%
-                </div>
+                <TabsContent value="settings" className="mt-0 space-y-3">
+                  <Card className="rounded-2xl">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">General</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <SettingRow
+                        title="Autostart"
+                        description="Launch peek on system startup"
+                        control={
+                          <Switch
+                            checked={!!autostart}
+                            onCheckedChange={toggleAutostart}
+                            disabled={autostart === null}
+                          />
+                        }
+                      />
+
+                      <Separator />
+
+                      <SettingRow
+                        title="Refresh data"
+                        description="Reload current usage from the database"
+                        control={
+                          <button
+                            type="button"
+                            onClick={fetchUsage}
+                            className="inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                          >
+                            <RefreshCw
+                              className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+                            />
+                            Refresh
+                          </button>
+                        }
+                      />
+                    </CardContent>
+                  </Card>
+
+                  <Card className="rounded-2xl">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">App info</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <HistoryRow label="Mode" value="Tray panel" />
+                      <Separator />
+                      <HistoryRow label="Theme" value="Dark" />
+                      <Separator />
+                      <HistoryRow label="Version" value="0.1.0" />
+                      <Separator />
+                      <HistoryRow label="Author" value="peek" />
+                      <Separator />
+                      <HistoryRow
+                        label="Window"
+                        value="Hide to tray on close"
+                      />
+                    </CardContent>
+                  </Card>
+                </TabsContent>
               </div>
-
-              <div className="progress-bar">
-                <div
-                  className="progress download-bar"
-                  style={{ width: `${downloadShare}%` }}
-                />
-                <div
-                  className="progress upload-bar"
-                  style={{ width: `${uploadShare}%` }}
-                />
-              </div>
-
-              <div className="split-values">
-                <div>
-                  <span className="mini-label">Download</span>
-                  <strong>{formatBytes(usage.all_time.rx)}</strong>
-                </div>
-                <div>
-                  <span className="mini-label">Upload</span>
-                  <strong>{formatBytes(usage.all_time.tx)}</strong>
-                </div>
-              </div>
-            </div>
-          </section>
-        </>
-      ) : (
-        <div className="loading-card">No usage data found.</div>
-      )}
+            </ScrollArea>
+          </div>
+        </Tabs>
+      </div>
     </main>
   );
 }
 
-function UsageCard({
+function SmallUsageCard({
   title,
-  data,
-  formatBytes,
-  accent,
+  icon,
+  rx,
+  tx,
 }: {
   title: string;
-  data: Usage;
-  formatBytes: (b: number) => string;
-  accent: "green" | "blue" | "purple" | "orange";
+  icon: React.ReactNode;
+  rx: string;
+  tx: string;
 }) {
   return (
-    <div className={`card ${accent}`}>
-      <div className="card-top">
-        <h3>{title}</h3>
-        <span className="pill">Tracked</span>
+    <Card className="rounded-2xl">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-xs font-medium">{title}</CardTitle>
+        <div className="rounded-md border p-1 text-muted-foreground">
+          {icon}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <MiniMetric
+          label="Down"
+          value={rx}
+          icon={<ArrowDown className="h-3 w-3 text-sky-500" />}
+        />
+        <MiniMetric
+          label="Up"
+          value={tx}
+          icon={<ArrowUp className="h-3 w-3 text-emerald-500" />}
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
+function MiniMetric({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl border bg-background/40 px-2.5 py-2">
+      <div className="rounded-md border bg-card p-1">{icon}</div>
+      <div className="min-w-0">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          {label}
+        </p>
+        <p className="truncate text-xs font-semibold">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function CompactStat({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border bg-background/40 p-2.5">
+      <div className="mb-1 flex items-center gap-1.5 text-muted-foreground">
+        {icon}
+        <span className="text-[11px]">{label}</span>
+      </div>
+      <div className="text-sm font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function HistoryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-sm font-medium">{value}</span>
+    </div>
+  );
+}
+
+function SettingRow({
+  title,
+  description,
+  control,
+}: {
+  title: string;
+  description: string;
+  control: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="text-[11px] text-muted-foreground">{description}</p>
+      </div>
+      <div className="shrink-0">{control}</div>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <Card className="rounded-2xl">
+      <CardContent className="flex min-h-24 items-center justify-center text-sm text-muted-foreground">
+        {text}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Card key={i} className="rounded-2xl">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-3.5 w-12" />
+                <Skeleton className="h-5 w-5 rounded-md" />
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Skeleton className="h-10 w-full rounded-xl" />
+              <Skeleton className="h-10 w-full rounded-xl" />
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      <div className="stats">
-        <div className="stat-row">
-          <span className="icon download-icon">↓</span>
-          <div className="info">
-            <span className="label">Download</span>
-            <span className="value">{formatBytes(data.rx)}</span>
+      <Card className="rounded-2xl">
+        <CardHeader className="pb-2">
+          <Skeleton className="h-4 w-28" />
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Skeleton className="h-2 w-full" />
+          <div className="grid grid-cols-2 gap-2">
+            <Skeleton className="h-14 w-full rounded-xl" />
+            <Skeleton className="h-14 w-full rounded-xl" />
           </div>
-        </div>
-
-        <div className="stat-row">
-          <span className="icon upload-icon">↑</span>
-          <div className="info">
-            <span className="label">Upload</span>
-            <span className="value">{formatBytes(data.tx)}</span>
-          </div>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

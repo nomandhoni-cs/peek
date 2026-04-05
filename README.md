@@ -1,149 +1,98 @@
-<!--
-  README for peek: a tray-first Tauri + React template.
-  Keep this file focused, easy to scan, and actionable for new contributors.
--->
 
-# peek — Tray-first Tauri App Template
+# 👁️ Peek
 
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![build](https://img.shields.io/badge/build-windows%20%7C%20linux%20%7C%20macOS-lightgrey.svg)](#)
+**Peek** is a lightweight, ultra-persistent system monitor and network traffic tracker built with Tauri v2, Rust, and React. 
 
-peek is a minimal, production-minded template for tray-first desktop apps
-built with Tauri (Rust) and a React (Vite) frontend. The app is designed to
-live primarily in the system tray: it starts hidden, supports left-click
-toggle of the main window, and exposes actions on right-click.
+It lives in your system tray, provides a beautifully modern Shadcn-powered dashboard for network analytics, and features a bulletproof, draggable overlay that sits permanently above your Windows taskbar to show live CPU, GPU, RAM, and Network usage.
 
-Use this repository as a starting point for small utilities like clocks,
-timers, background helpers, or any tool where the tray is the primary UI.
+![Tech Stack](https://img.shields.io/badge/Tauri_v2-Rust-F46623?logo=tauri)
+![Tech Stack](https://img.shields.io/badge/React-TypeScript-61DAFB?logo=react)
+![Tech Stack](https://img.shields.io/badge/Tailwind_v4-Shadcn_UI-38B2AC?logo=tailwindcss)
+![Tech Stack](https://img.shields.io/badge/SQLite-sqlx-003B57?logo=sqlite)
 
-Key features
+---
 
-- Tray-first UX: the app starts hidden and runs in the system tray.
-- Precise tray interactions: left-click strictly toggles show/hide; right-click
-  opens a native context menu.
-- Autostart support using `tauri-plugin-autostart` (menu checkbox + frontend
-  event sync).
-- Small, easy-to-extend Rust backend (`src-tauri/`) and React frontend (`src/`).
+## ✨ Features
 
-Quick start — development
+- **Live Taskbar Overlay**: A tiny, draggable, transparent window displaying live ⬇️ Download, ⬆️ Upload, CPU, GPU, and RAM usage.
+- **Aggressive Topmost Engine**: Defeats Windows 11's strict taskbar layering by aggressively re-asserting `HWND_TOPMOST` native Win32 calls.
+- **Network Traffic Database**: Silently tracks precise network bytes transferred locally in a SQLite database.
+- **Modern Dashboard**: A compact tray dashboard featuring glass-morphic UI, visual distribution bars, and historical stats (Today, 7 Days, 30 Days, All Time).
+- **Zero-Locking Architecture**: Uses SQLite WAL (Write-Ahead Logging) so the Rust backend can write data simultaneously while the React frontend queries it, ensuring 0 UI freezes.
 
-Prerequisites
+---
 
-- Rust (recommended toolchain: 1.88.0). Pin locally with:
-  ```bash
-  rustup override set 1.88.0
-  ```
-- On Windows: install Visual Studio Build Tools + Windows SDK ("Desktop
-  development with C++").
-- Node-compatible package manager (bun recommended) or npm/pnpm.
+## 🏗️ Architecture & Data Flow
 
-Run locally
+Understanding the data flow is critical to contributing to Peek. The app is split into a **Rust Backend** (Heavy lifting, hardware polling, background DB writes) and a **React Frontend** (UI, manual DB queries).
 
-1. Install frontend deps:
+1. **Hardware Polling (`monitor.rs`)**: Every 1 second, a background Tokio thread polls the OS for network bytes, CPU, RAM, and GPU usage (via WMI).
+2. **Live UI Updates (`lib.rs`)**: The 1-second loop emits a Tauri event (`stats-update`) to the React `Overlay.tsx`, updating the live taskbar overlay.
+3. **Traffic Accumulation (`db.rs`)**: Raw bytes are accumulated in memory. Every 60 seconds, Rust uses `sqlx` to flush these bytes to `peek.db` (SQLite) to minimize SSD wear.
+4. **Dashboard Queries (`App.tsx`)**: When the user opens the tray dashboard, React uses `@tauri-apps/plugin-sql` to execute direct `SELECT` queries against `peek.db` to render historical data.
 
+---
+
+## 📂 File Structure Guide (Which file does what?)
+
+### Frontend (`src/`)
+- **`App.tsx`**: The main Dashboard. Runs in a borderless, transparent, portrait window. Features the Shadcn Tabs, customized draggable title bar, and executes SQL queries for historical data.
+- **`Overlay.tsx`**: The Live Taskbar Overlay. Runs in a tiny 350x40px window. Listens to Tauri events to update live stats. Includes logic to save its X/Y coordinates when dragged.
+- **`index.css`**: Injects Tailwind v4, Shadcn styles, and strictly enforces the dark-mode theme across all windows.
+
+### Backend (`src-tauri/src/`)
+- **`lib.rs`**: The brain of the app. Initializes Tauri, sets up SQLite migrations, spawns the 1-second background monitoring loop, and registers all frontend-invokable commands.
+- **`monitor.rs`**: System hardware polling. Uses `sysinfo` for CPU/RAM/Network, and spawns a separate COM thread using `wmi` to query the Windows GPU Performance Counters.
+- **`db.rs`**: Configures the async `sqlx` SQLite pool. Forces `WAL` journal mode and handles the 60-second background data upserts.
+- **`overlay.rs`**: The Win32 specific windowing logic. Calculates the exact dimensions of the Windows Taskbar to anchor the overlay on initial launch. Spawns an aggressive 500ms background thread utilizing `windows-sys` to force the window above the taskbar layer.
+- **`tray.rs`**: Builds the system tray icon and native context menu. Handles left-click events to toggle the visibility of the main dashboard window.
+- **`config.rs` & `overlay_state.rs`**: Handles saving and loading the X/Y coordinates of the overlay window so it remembers where the user dragged it between sessions.
+
+### Permissions (`src-tauri/capabilities/`)
+- **`default.json`**: Tauri v2 is strictly secure by default. This file explicitly whitelists the frontend's ability to drag windows, minimize/hide windows, and execute SQL queries.
+
+---
+
+## 🛠️ Contributor Guide
+
+### Prerequisites
+- [Rust](https://www.rust-lang.org/tools/install)
+- [Bun](https://bun.sh/) (JavaScript runtime and package manager)
+- Windows OS (Required for local development due to WMI and `windows-sys` taskbar API calls).
+
+### Local Setup
+1. Clone the repository.
+2. Install frontend dependencies:
+   ```bash
+   bun install
+   ```
+3. Run the development server (compiles Rust and launches Vite):
+   ```bash
+   bun run dev
+   ```
+
+### Important Development Notes
+
+#### 1. Tauri v2 Capabilities
+If you add a new feature to the frontend that interacts with the OS (e.g., resizing a window, reading a file, sending a notification), **it will silently fail** unless you explicitly allow it in `src-tauri/capabilities/default.json`. Always check permissions if an API call returns `undefined` or does nothing.
+
+#### 2. The `peek.db` SQLite Database
+We intentionally use two different SQLite libraries:
+- **`sqlx` (Rust)**: Used exclusively by the background thread to safely `INSERT` data every 60 seconds without freezing the UI.
+- **`tauri-plugin-sql` (React)**: Used by the frontend to asynchronously `SELECT` data for rendering. 
+*Note: Because we use SQLite `WAL` mode, the DB will safely handle concurrent reads and writes. Do not remove the `WAL` configuration in `db.rs`!*
+
+#### 3. Why `force_topmost`?
+Windows 11 constantly pushes taskbar overlays to the background. If you edit `overlay.rs`, you will notice a loop that calls `SetWindowPos` every 500ms, and a `force_topmost` Tauri command triggered "onMoved" in `Overlay.tsx`. These are intentional "hacks" required to prevent the OS from burying our overlay widget. 
+
+### Building for Production
+To compile the final `.exe` and `.msi` installers:
 ```bash
-bun install
-# or: npm install
+bun run build
 ```
+The compiled binaries will be located in `src-tauri/target/release/bundle/`.
 
-2. Start the development environment (runs Vite and the native Tauri app):
+---
 
-```bash
-bun run tauri dev
-# or: npm run tauri dev
-```
-
-3. Interact with the tray:
-
-- Left-click the tray icon to toggle the main window (hide to tray or show).
-- Right-click the tray icon to open the action menu (Autostart, Show/Hide,
-  Quit).
-
-Build & package
-
-Build native binary (release):
-
-```bash
-cd src-tauri
-cargo +1.88.0 build --release
-```
-
-Create packaged installers using Tauri:
-
-```bash
-cd src-tauri
-cargo +1.88.0 build
-cd ..
-tauri build
-```
-
-See Tauri docs for platform-specific packaging/signing steps.
-
-Project layout
-
-- `src/` — React (Vite) frontend (UI, autostart toggle). See `src/App.tsx`.
-- `src-tauri/` — Rust backend and Tauri configuration:
-  - `src/tray.rs` — tray icon, menu, and click handling (where tray UX lives).
-  - `src/autostart.rs` — helper around `tauri-plugin-autostart`.
-  - `tauri.conf.json` — Tauri config (app starts hidden by default).
-  - `icons/` — bundled icons (generated by `npx @tauri-apps/cli icon`).
-
-Important implementation notes
-
-- Left-click toggling uses `window.hide()` when hiding so the app is removed
-  from the taskbar (tray-only). Showing calls `window.show()`,
-  `window.unminimize()`, and `window.set_focus()` to restore/activate the UI.
-- Right-click behavior relies on the OS showing the native menu. The code sets
-  `.show_menu_on_left_click(false)` to ensure left-click never opens the menu.
-- Clicks are debounced (200 ms) to prevent accidental double toggles.
-- Autostart changes emit `autostart-changed` events so the frontend stays in
-  sync with backend state.
-
-Testing & verification checklist
-
-1. App starts without showing the main window; tray icon is visible.
-2. Left-click the tray icon:
-   - Hidden -> window appears focused; toggle menu text becomes "Hide".
-   - Visible -> window hides to tray; toggle menu text becomes "Show".
-   - No context menu appears on left-click.
-3. Right-click the tray icon opens the context menu: Toggle Autostart (checkbox),
-   Show/Hide, Quit.
-4. Rapid clicks (within 200 ms) do not cause visible flicker.
-
-Extending the project
-
-- Add menu entries in `src-tauri/src/tray.rs` using the `MenuBuilder` API and
-  handle actions with `.on_menu_event(...)`.
-- Expose backend commands with `#[tauri::command]` and register them in
-  `src-tauri/src/lib.rs` using `generate_handler!`.
-- Emit backend events to the frontend with `AppHandle.emit("event", payload)`
-  and listen in the UI with `@tauri-apps/api/event`.
-
-Cross-platform notes
-
-- Windows: primary target — tray menu and click handling are implemented for
-  native behavior.
-- Linux / macOS: system tray semantics vary across desktop environments. Some
-  platforms may treat right-click/control-click the same or ignore tooltips.
-  Test on each target OS to confirm expected UX.
-
-Contributing
-
-See `CONTRIBUTING.md` for development setup, branching patterns, and PR
-guidelines. Small, focused PRs with clear verification steps are preferred.
-
-License
-
-This project is open-source under the MIT License — see `LICENSE`.
-
-Acknowledgements
-
-- Built with Tauri and the `tauri-plugin-autostart` plugin.
-
-Want help polishing further?
-
-I can:
-1. Add screenshots and a short demo GIF to the README.
-2. Add GitHub Actions to run `cargo build` on push/PR across platforms.
-3. Create a pre-packaged release with installers.
-
-Pick one of the above if you'd like me to continue.
+## 📄 License
+This project is licensed under the MIT License.
